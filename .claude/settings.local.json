@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e ':*)",
+      "Bash(npx prisma:*)",
+      "Bash(npx tsc:*)",
+      "Bash(timeout 5 npx tsx src/index.ts)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:meu.pluggy.ai)",
+      "WebFetch(domain:docs.pluggy.ai)",
+      "Bash(npx tsx -e ':*)",
+      "Bash(npx tsx:*)",
+      "Bash(npm create:*)",
+      "Bash(echo \"Backend PID: $!\")",
+      "Bash(curl -s http://localhost:3001/api/summary?month=2026-03)",
+      "Bash(npm run:*)",
+      "Bash(docker compose:*)"
+    ]
+  }
+}
