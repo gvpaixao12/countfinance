@@ -1,5 +1,4 @@
 import { PrismaClient } from "@prisma/client";
-import axios from "axios";
 
 const prisma = new PrismaClient();
 
@@ -51,18 +50,4 @@ async function createAlert(type: string, message: string) {
   if (exists) return;
 
   await prisma.alert.create({ data: { type, message } });
-
-  if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) {
-    try {
-      await axios.post(
-        `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`,
-        {
-          chat_id: process.env.TELEGRAM_CHAT_ID,
-          text: message,
-        }
-      );
-    } catch (e) {
-      console.error("[alert] Falha ao enviar Telegram:", e);
-    }
-  }
 }

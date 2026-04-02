@@ -3,7 +3,6 @@ import express from "express";
 import cors from "cors";
 import path from "path";
 import routes from "./api/routes";
-import { startScheduler } from "./cron/scheduler";
 
 const app = express();
 app.use(cors());
@@ -21,5 +20,4 @@ const PORT = process.env.PORT || 3001;
 
 app.listen(PORT, () => {
   console.log(`fintrack rodando em http://localhost:${PORT}`);
-  startScheduler();
 });
