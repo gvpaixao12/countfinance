@@ -12,6 +12,7 @@ model Account {
   name      String
   type      String   // CHECKING, CREDIT_CARD, SAVINGS
   bank      String   // Nubank, PicPay, etc
+  balance   Float?   // Saldo da conta (atualizado na importacao)
   createdAt DateTime @default(now())
 }
 

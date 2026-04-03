@@ -3,7 +3,7 @@ import { PrismaClient } from "@prisma/client";
 import multer from "multer";
 import { parseOFX } from "../parsers/ofx";
 import { parseCSV } from "../parsers/csv";
-import { categorize } from "../categorizer";
+import { categorize, categorizeBatchWithAI } from "../categorizer";
 
 const prisma = new PrismaClient();
 const router = Router();
@@ -50,22 +50,48 @@ router.post("/upload", upload.single("file"), async (req, res) => {
     if (ext.endsWith(".ofx") || ext.endsWith(".qfx")) {
       const parsed = parseOFX(content);
       transactions = parsed.transactions;
+
+      // Salva saldo da conta se disponivel no OFX
+      if (parsed.balance !== null) {
+        await prisma.account.update({
+          where: { id: accountId },
+          data: { balance: parsed.balance },
+        });
+      }
     } else if (ext.endsWith(".csv")) {
       transactions = parseCSV(content);
     } else {
       return res.status(400).json({ error: "Formato nao suportado. Use .ofx ou .csv" });
     }
 
+    // Categoriza: regex primeiro, depois IA pra quem ficou "Outros"
+    const categorized = transactions.map((tx, index) => ({
+      ...tx,
+      index,
+      category: categorize(tx.description, tx.amount, tx.type),
+    }));
+
+    // Envia os "Outros" pro Groq categorizar
+    const othersForAI = categorized
+      .filter((t) => t.category === "Outros")
+      .map((t) => ({ description: t.description, amount: t.amount, type: t.type, index: t.index }));
+
+    const aiCategories = await categorizeBatchWithAI(othersForAI);
+
+    // Aplica resultados da IA
+    for (const [index, category] of aiCategories) {
+      categorized[index].category = category;
+    }
+
     let imported = 0;
     let skipped = 0;
+    let aiCategorized = aiCategories.size;
 
-    for (const tx of transactions) {
-      const category = categorize(tx.description, tx.amount, tx.type);
-
+    for (const tx of categorized) {
       try {
         await prisma.transaction.upsert({
           where: { externalId: tx.externalId },
-          update: { description: tx.description, amount: tx.amount, category },
+          update: { description: tx.description, amount: tx.amount, category: tx.category },
           create: {
             externalId: tx.externalId,
             date: tx.date,
@@ -73,7 +99,7 @@ router.post("/upload", upload.single("file"), async (req, res) => {
             amount: tx.amount,
             type: tx.type,
             accountId,
-            category,
+            category: tx.category,
           },
         });
         imported++;
@@ -82,7 +108,7 @@ router.post("/upload", upload.single("file"), async (req, res) => {
       }
     }
 
-    res.json({ success: true, imported, skipped, total: transactions.length });
+    res.json({ success: true, imported, skipped, aiCategorized, total: transactions.length });
   } catch (error: any) {
     console.error("[upload] Erro ao processar arquivo:", error.message);
     res.status(500).json({ error: "Erro ao processar arquivo: " + error.message });
@@ -129,20 +155,40 @@ router.get("/summary", async (req, res) => {
 
   const transactions = await prisma.transaction.findMany({ where });
 
-  const incomeTxs = transactions.filter((t) => t.category === "Renda");
-  const expenseTxs = transactions.filter((t) => t.category !== "Renda" && t.category !== "Fatura");
+  const notExpense = ["Renda", "Fatura", "Investimentos", "Rendimentos", "Emprestimos"];
+  const incomeCategories = ["Renda", "Rendimentos", "Emprestimos"];
 
-  const income = incomeTxs.reduce((s, t) => s + Math.abs(t.amount), 0);
-  const expenses = expenseTxs.reduce((s, t) => s + Math.abs(t.amount), 0);
+  const incomeTxs = transactions.filter((t: any) => incomeCategories.includes(t.category));
+  const investmentTxs = transactions.filter((t: any) => t.category === "Investimentos");
+  const expenseTxs = transactions.filter((t: any) => !notExpense.includes(t.category));
 
+  const income = incomeTxs.reduce((s: number, t: any) => s + Math.abs(t.amount), 0);
+  const expenses = expenseTxs.reduce((s: number, t: any) => s + Math.abs(t.amount), 0);
+  const invested = investmentTxs.reduce((s: number, t: any) => s + Math.abs(t.amount), 0);
+
+  // Gastos por categoria
   const byCategory: Record<string, { total: number; count: number }> = {};
-  expenseTxs.forEach((t) => {
+  expenseTxs.forEach((t: any) => {
     if (!byCategory[t.category]) byCategory[t.category] = { total: 0, count: 0 };
     byCategory[t.category].total += Math.abs(t.amount);
     byCategory[t.category].count++;
   });
 
-  res.json({ month, income, expenses, balance: income - expenses, byCategory });
+  // Entradas por categoria
+  const byIncomeCategory: Record<string, { total: number; count: number }> = {};
+  incomeTxs.forEach((t: any) => {
+    if (!byIncomeCategory[t.category]) byIncomeCategory[t.category] = { total: 0, count: 0 };
+    byIncomeCategory[t.category].total += Math.abs(t.amount);
+    byIncomeCategory[t.category].count++;
+  });
+
+  // Saldo da conta
+  const accountWhere: any = {};
+  if (accountId) accountWhere.id = accountId;
+  const accs = await prisma.account.findMany({ where: accountWhere });
+  const accountBalance = accs.reduce((s: number, a: any) => s + (a.balance || 0), 0);
+
+  res.json({ month, income, expenses, balance: income - expenses, invested, accountBalance, byCategory, byIncomeCategory });
 });
 
 // ============ ALERTS & BUDGETS ============
