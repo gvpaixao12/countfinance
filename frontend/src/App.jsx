@@ -718,6 +718,11 @@ export default function App() {
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         button:hover { opacity: 0.85; }
         * { box-sizing: border-box; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.15); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,0.3); }
+        * { scrollbar-width: thin; scrollbar-color: rgba(148,163,184,0.15) transparent; }
         @media (max-width: 768px) {
           .kpi-grid { grid-template-columns: 1fr !important; }
           .charts-grid { grid-template-columns: 1fr !important; }
