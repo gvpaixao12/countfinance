@@ -1,8 +1,29 @@
-const CATEGORIES = [
+/**
+ * Lista enviada pro prompt da IA e usada pra validar a resposta dela.
+ * De proposito NAO inclui "Salario" nem PENDING: a IA nao tem como saber de
+ * quem veio um PIX, entao nao deve poder chutar salario nem marcar pendencia.
+ */
+const AI_CATEGORIES = [
   "Alimentacao", "Mercado", "Transporte", "Moradia", "Assinaturas",
   "Saude", "Compras", "Lazer", "Seguros", "Transferencias", "Fatura",
   "Emprestimos", "Investimentos", "Rendimentos", "Renda", "Outros",
 ];
+
+/** Todas as categorias do sistema — e o que a interface oferece pro usuario. */
+export const CATEGORIES = [
+  "Salario", "Renda", "Rendimentos", "Emprestimos", "Investimentos",
+  "Alimentacao", "Mercado", "Transporte", "Moradia", "Assinaturas",
+  "Saude", "Compras", "Lazer", "Seguros", "Transferencias", "Fatura",
+  "Outros", "AClassificar",
+];
+
+/**
+ * Caixa de entrada de dinheiro que ainda nao sabemos o que e.
+ * Fica de fora de CATEGORIES de proposito: a IA nao deve escolher esta
+ * categoria (pra isso ela ja tem "Outros"), e o summary a trata como
+ * neutra — nao entra nem em receita nem em despesa.
+ */
+export const PENDING = "AClassificar";
 
 const RULES: Array<{ pattern: RegExp; category: string }> = [
   // Alimentacao
@@ -70,19 +91,62 @@ const RULES: Array<{ pattern: RegExp; category: string }> = [
   // Rendimentos
   { pattern: /rendimento|juros\s+s\/\s*capital|dividendo|provento/i, category: "Rendimentos" },
 
-  // Renda (salario e pix recebidos)
-  { pattern: /leverpro/i, category: "Renda" },
-  { pattern: /salário|salario/i, category: "Renda" },
-  { pattern: /transfer[eê]ncia\s+recebid|pix\s+receb|ted\s+receb|reembolso\s+receb/i, category: "Renda" },
+  // Salario — so o que temos certeza. "Renda" fica reservada pra outras
+  // entradas recorrentes (freela, aluguel) que voce classificar depois.
+  // IMPORTANTE: estas regras vem DEPOIS das de "enviado" (acima) de proposito,
+  // senao um pix enviado PARA a LeverPro seria contado como salario.
+  { pattern: /lever\s*-?\s*pro/i, category: "Salario" },
+  { pattern: /sal[áa]rio|folha\s+de\s+pagamento/i, category: "Salario" },
+
+  // Qualquer outra entrada fica pendente de classificacao manual.
+  // Antes isso tudo virava "Renda", o que inflava a receita do mes com pix
+  // de amigos, reembolsos e estornos.
+  { pattern: /transfer[eê]ncia\s+recebid|pix\s+receb|ted\s+receb|reembolso\s+receb/i, category: PENDING },
 ];
 
-export function categorize(description: string, amount: number, type?: string): string {
+export type UserRule = { pattern: string; category: string; type?: string | null };
+
+/**
+ * Regras que o usuario criou na interface ("sempre categorizar assim").
+ *
+ * Comparacao por substring, nao regex: o texto vem de um campo de formulario e
+ * um regex malformado ali quebraria a importacao inteira.
+ *
+ * A regra so vale para o mesmo sentido do dinheiro (`type`). Sem isso, uma regra
+ * "FULANO -> Renda" criada a partir de um PIX recebido tambem capturaria os PIX
+ * enviados para o FULANO, transformando gasto em receita.
+ */
+export function matchUserRule(
+  description: string,
+  rules: UserRule[],
+  type?: string
+): string | null {
+  const desc = description.toLowerCase();
+  const hit = rules.find(
+    (r) =>
+      r.pattern.trim() !== "" &&
+      desc.includes(r.pattern.toLowerCase()) &&
+      (!r.type || !type || r.type === type)
+  );
+  return hit ? hit.category : null;
+}
+
+export function categorize(
+  description: string,
+  amount: number,
+  type?: string,
+  userRules: UserRule[] = []
+): string {
+  // O que o usuario definiu explicitamente ganha das regras embutidas.
+  const fromUser = matchUserRule(description, userRules, type);
+  if (fromUser) return fromUser;
+
   const match = RULES.find((r) => r.pattern.test(description));
   if (match) return match.category;
 
-  if (type === "CREDIT") return "Renda";
-  if (amount < 0) return "Outros";
-  if (type === "DEBIT") return "Outros";
+  // Os parsers gravam amount sempre positivo (Math.abs); quem carrega o sinal
+  // e o type. Entrada sem regra fica pendente — nao chutamos que e salario.
+  if (type === "CREDIT") return PENDING;
 
   return "Outros";
 }
@@ -106,7 +170,7 @@ export async function categorizeBatchWithAI(
   const items = uncategorized.map((t, i) => `${i + 1}. "${t.description}" (R$ ${Math.abs(t.amount).toFixed(2)}, ${t.type})`).join("\n");
 
   const prompt = `Categorize cada transação bancária brasileira em UMA das categorias:
-${CATEGORIES.join(", ")}
+${AI_CATEGORIES.join(", ")}
 
 Transações:
 ${items}
@@ -151,7 +215,7 @@ Regras:
 
     for (const item of parsed) {
       const tx = uncategorized[item.id - 1];
-      if (tx && CATEGORIES.includes(item.category)) {
+      if (tx && AI_CATEGORIES.includes(item.category)) {
         result.set(tx.index, item.category);
       }
     }

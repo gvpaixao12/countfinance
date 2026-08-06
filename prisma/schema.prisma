@@ -23,6 +23,9 @@ model Transaction {
   description String
   amount      Float
   category    String   @default("Outros")
+  // Marcada quando voce escolhe a categoria na mao. Protege sua escolha de ser
+  // sobrescrita pelo recategorize ou por uma reimportacao do mesmo extrato.
+  manualCategory Boolean @default(false)
   type        String   // DEBIT or CREDIT
   accountId   String
   createdAt   DateTime @default(now())
@@ -49,4 +52,52 @@ model Budget {
   id       String @id @default(uuid())
   category String @unique
   limit    Float
+}
+
+// Valor da fatura fechada de um cartao, digitado a mao.
+// O extrato da conta corrente so registra a fatura no dia em que ela e paga —
+// ate la nao existe lancamento nenhum. Guardar o valor fechado aqui e o que
+// permite prever quanto ainda vai sair da conta.
+// Uma fatura por cartao por mes de referencia; salvar de novo sobrescreve.
+model CardBill {
+  id        String    @id @default(uuid())
+  accountId String // conta do tipo CREDIT_CARD
+  month     String // "2026-08" — mes de referencia do fechamento
+  amount    Float
+  dueDate   DateTime? // vencimento, opcional
+  // Enquanto false o valor entra na previsao de saida. Marcar como paga tira
+  // ele da conta: o dinheiro ja saiu e o extrato do mes ja mostra isso.
+  paid      Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([accountId, month])
+}
+
+// Categoria criada pelo usuario, alem das embutidas no codigo.
+// `kind` decide de que lado do resumo ela soma — sem isso o summary nao saberia
+// se um lancamento dessa categoria e receita ou despesa.
+model Category {
+  id        String   @id @default(uuid())
+  name      String   @unique // chave gravada em Transaction.category, ex: "PetShop"
+  label     String // como aparece na tela, ex: "Pet Shop"
+  color     String
+  icon      String
+  kind      String   @default("expense") // "expense" | "income"
+  createdAt DateTime @default(now())
+}
+
+// Regra criada pelo usuario a partir de uma transacao ("sempre categorizar assim").
+// `pattern` e texto simples, comparado com includes() case-insensitive — nao e
+// regex, pra ninguem conseguir escrever um padrao invalido pela interface.
+model CategoryRule {
+  id        String   @id @default(uuid())
+  pattern   String
+  category  String
+  // DEBIT ou CREDIT: uma regra criada a partir de um PIX recebido nao pode
+  // capturar um PIX enviado para a mesma pessoa. Null = vale para os dois.
+  type      String?
+  createdAt DateTime @default(now())
+
+  @@unique([pattern, type])
 }
